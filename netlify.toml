@@ -1,0 +1,33 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "24"
+
+# The Netlify Server (netlify/server/index.ts) handles /api/* and /ws.
+# Client-side routes of the single-page app are rewritten to index.html.
+[[redirects]]
+  from = "/table/*"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/join/*"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/learn"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/learn/*"
+  to = "/index.html"
+  status = 200
+
+[dev]
+  command = "npx vite --port 5173 --strictPort"
+  targetPort = 5173
+  framework = "#custom"

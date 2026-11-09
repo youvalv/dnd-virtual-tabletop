@@ -1,0 +1,37 @@
+{
+  "name": "dnd-virtual-tabletop",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "netlify dev --port 8889",
+    "build": "vite build",
+    "db:generate": "drizzle-kit generate",
+    "test:multiplayer": "node scripts/multiplayer-test.mjs"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^11.1.8",
+    "@netlify/database": "^2.0.3",
+    "@netlify/server": "^0.1.6",
+    "drizzle-orm": "^1.0.0-beta.22",
+    "lucide-react": "^1.70.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-router-dom": "^7.18.5",
+    "ws": "^8.22.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/ws": "^8.18.2",
+    "@vitejs/plugin-react": "^6.2.1",
+    "drizzle-kit": "^1.0.0-beta.22",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.6"
+  }
+}
