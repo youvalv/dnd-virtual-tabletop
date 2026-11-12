@@ -8,6 +8,7 @@ Hearthlight is a browser-based virtual tabletop for playing Dungeons & Dragons w
 - **Battle map**: square grid with pan, zoom and pinch. Maps can be uploaded images or blank grids. Player, monster and NPC tokens show names and HP bars. Dragging a token shows a live preview to everyone else. There is a ping tool, DM-controlled fog of war (brush or box), and multiple scenes. The DM can prepare a scene privately before showing it to players.
 - **Chat and dice**: persistent chat with timestamps. Dice rolls are server-authoritative (`1d20+5`, `2d6`, `4d6kh3`, `1d20 adv`). There is a one-click dice tray, a roll history filter, and DM-only private rolls (`/pr 1d20`). Each player's character sheet has one-click roll buttons.
 - **DM dashboard**: party management (HP, max HP, AC, conditions, private notes), an encounter tool with SRD monster presets, an initiative tracker with turn order and a "Next turn" control, scene and fog controls, private session notes, and save points.
+- **Maps from real places**: the DM names any place on Earth, plus optional story points such as villains, tone or party level. An AI agent finds the place on Google Maps, studies the satellite view, paints a top-down fantasy battle map from it and writes a private story brief. The brief covers the premise, a read-aloud intro, keyed locations, NPCs, hooks, secrets and SRD encounters that can be placed on the map with one click. The result arrives as a new hidden scene. If Google Maps is unavailable, the agent works from its own knowledge of the place and says so in the brief.
 - **Learn D&D**: a beginner's guide and a searchable quick-rules reference based on the SRD 5.2.1. The reference is also available in-game as a slide-over drawer. The Learn section links to the official free rules and the D&D Beyond character builder.
 - **Demo adventure**: "The Ruined Watchtower" has an original map, four pre-made level 1 characters, goblins and skeletons, a read-aloud intro and a step-by-step encounter guide.
 
@@ -17,6 +18,7 @@ Hearthlight is a browser-based virtual tabletop for playing Dungeons & Dragons w
 - **Backend**: one **Netlify Server** (`netlify/server/index.ts`, a long-running Node.js process). It serves the JSON API under `/api/*` and a WebSocket endpoint at `/ws`, using the `ws` library.
 - **Storage**: **Netlify Database** (Postgres) via Drizzle ORM holds campaigns, participants, chat, sessions and save points. **Netlify Blobs** holds map images.
 - **Images**: Netlify Image CDN serves the landing page art.
+- **Map agent**: a Netlify background function (`netlify/functions/map-agent-background.mts`) runs a Claude tool-use loop (`server/mapAgent.ts`) through Netlify AI Gateway. Its tools call the Google Maps Platform (Places API (New), with Geocoding as a fallback, and the Maps Static API) and a Gemini image model that paints the map. It needs `GOOGLE_MAPS_API_KEY`: a server-side key (no HTTP-referrer restriction) with those three APIs enabled.
 
 See `AGENTS.md` for the architecture in detail.
 

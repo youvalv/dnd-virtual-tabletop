@@ -64,6 +64,7 @@ ok(tokensOf(p1).every((t) => t.kind === 'pc'), `player sees only PC tokens under
 ok(!pr.includes('Goblin') && !pr.includes('Skeleton') && !pr.includes('Grisk'), 'no monster names leak to player')
 ok(!pr.includes('dmNotes') && !pr.includes('Owes a debt') && !pr.includes('sessionNotes'), 'no DM notes leak to player')
 ok(!pr.includes('guide') && !pr.includes('readAloud') && p1.state.board.scenes === undefined, 'no guide or scene list for player')
+ok(!pr.includes('mapJobs') && !pr.includes('"brief"') && !pr.includes('hasBrief'), 'no map agent jobs or story briefs for player')
 ok(!pr.includes('Crypt'), 'other scene names hidden from player')
 ok(p1.state.board.scene.mapUrl === null && p1.state.board.scene.mapPending === true, 'player has no map url until DM renders masked map')
 ok(p1.state.campaign.inviteCode === undefined, 'player does not get invite code')

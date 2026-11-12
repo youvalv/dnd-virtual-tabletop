@@ -10,7 +10,8 @@ import { applyLocalChange, getLoadedRoom, notifyMessages, syncRoom } from './hub
 import { blankBoard, demoBoard } from './content.ts'
 import { playerMapSafe } from './views.ts'
 import { WATCHTOWER_MAP_WEBP_BASE64 } from './demo-map.ts'
-import { HttpError, cleanColor, cleanIcon, cleanText, clampInt, hashToken, safeEqual, secretToken, shortId, sign } from './util.ts'
+import type { MapJob } from '../shared/types.ts'
+import { HttpError, cleanColor, cleanIcon, cleanText, clampInt, hashToken, mapJobSignature, safeEqual, secretToken, shortId, sign } from './util.ts'
 
 const MAX_PLAYERS = 10
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024
@@ -244,6 +245,70 @@ async function serveMap(res: ServerResponse, campaignId: string, sceneId: string
   res.end(buf)
 }
 
+// Map agent: the DM names a real place (plus optional story points). The job is
+// recorded on the board and run by the `map-agent-background` function, which
+// can take a few minutes; progress reaches the DM through normal state pushes.
+const MAP_JOB_STALE_MS = 16 * 60 * 1000
+
+function functionOrigin(req: IncomingMessage): string {
+  const host = String(req.headers['x-forwarded-host'] ?? req.headers.host ?? '').split(',')[0].trim()
+  if (!host) return process.env.URL ?? ''
+  const local = /^(localhost|127\.0\.0\.1)(:|$)/.test(host)
+  const proto = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0].trim() || (local ? 'http' : 'https')
+  return `${proto}://${host}`
+}
+
+async function startMapJob(req: IncomingMessage, res: ServerResponse, campaignId: string) {
+  await requireDm(req, campaignId)
+  const body = await readJson(req)
+  const place = cleanText(body.place, 200).trim()
+  const story = cleanText(body.story, 3000).trim()
+  if (place.length < 2) throw new HttpError(400, 'Enter a place on Earth, for example "Bodiam Castle, England".')
+  const fog = body.fog !== false
+  const now = new Date().toISOString()
+  const job: MapJob = { id: shortId(10), place, story, fog, status: 'queued', step: 'Waiting for the map agent', error: '', sceneId: null, createdAt: now, updatedAt: now }
+  const row = await mutateCampaign(campaignId, (board) => {
+    const jobs = board.mapJobs ?? []
+    const busy = jobs.some((j) => (j.status === 'queued' || j.status === 'running') && Date.now() - Date.parse(j.updatedAt) < MAP_JOB_STALE_MS)
+    if (busy) throw new HttpError(409, 'A map is already being built. Wait for it to finish first.')
+    if (board.scenes.length >= 12) throw new HttpError(409, 'You have reached the scene limit (12). Delete a scene first.')
+    // Keep the 4 most recent jobs; stale unfinished ones are marked failed.
+    for (const j of jobs) {
+      if ((j.status === 'queued' || j.status === 'running') && Date.now() - Date.parse(j.updatedAt) >= MAP_JOB_STALE_MS) {
+        j.status = 'failed'
+        j.error = 'This run stopped responding.'
+      }
+    }
+    board.mapJobs = [job, ...jobs].slice(0, 4)
+  })
+  await afterChange(campaignId, row)
+  const sig = mapJobSignature(row!.mapSecret, campaignId, job.id)
+  let started = false
+  try {
+    const r = await fetch(`${functionOrigin(req)}/.netlify/functions/map-agent-background`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ campaignId, jobId: job.id, sig }),
+    })
+    started = r.status === 202 || r.ok
+    if (!started) console.warn('[map-agent] background function returned', r.status)
+  } catch (e) {
+    console.warn('[map-agent] could not start background function', (e as Error).message)
+  }
+  if (!started) {
+    const failed = await mutateCampaign(campaignId, (board) => {
+      const j = board.mapJobs?.find((x) => x.id === job.id)
+      if (!j || j.status !== 'queued') throw new NoChange()
+      j.status = 'failed'
+      j.error = 'The map agent could not be started. Please try again.'
+      j.updatedAt = new Date().toISOString()
+    }).catch((e) => (e instanceof NoChange ? null : Promise.reject(e)))
+    await afterChange(campaignId, failed)
+    throw new HttpError(502, 'The map agent could not be started. Please try again.')
+  }
+  json(res, 202, { jobId: job.id })
+}
+
 async function getSnapshots(req: IncomingMessage, res: ServerResponse, campaignId: string) {
   await requireDm(req, campaignId)
   const [snaps, sessions] = await Promise.all([listSnapshots(campaignId), listSessions(campaignId)])
@@ -286,6 +351,7 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse) {
     if (a === 'invite' && b && c === 'join' && method === 'POST') return await joinCampaign(req, res, b)
     if (a === 'campaigns' && b && c === 'me' && method === 'GET') return await whoAmI(req, res, b)
     if (a === 'campaigns' && b && c === 'snapshots' && method === 'GET') return await getSnapshots(req, res, b)
+    if (a === 'campaigns' && b && c === 'map-agent' && !d && method === 'POST') return await startMapJob(req, res, b)
     if (a === 'campaigns' && b && c === 'scenes' && d && e === 'map' && method === 'POST') return await uploadMap(req, res, b, d, url)
     if (a === 'campaigns' && b && c === 'scenes' && d && e === 'player-map' && method === 'POST') return await uploadPlayerMap(req, res, b, d, url)
     if (a === 'maps' && b && c && d && e && method === 'GET') return await serveMap(res, b, c, d, e, url)
