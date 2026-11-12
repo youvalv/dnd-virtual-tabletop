@@ -803,10 +803,36 @@ function SessionTab({ board, campaign, client, token, onError, onInfo }: Props) 
 // Map agent: real place (+ story points) -> battle map + story brief
 
 const JOB_STALE_MS = 16 * 60 * 1000
+const QUEUED_STALE_MS = 3 * 60 * 1000 // same limits as the server
 
 function jobState(j: MapJob): MapJob['status'] {
-  if ((j.status === 'queued' || j.status === 'running') && Date.now() - Date.parse(j.updatedAt) > JOB_STALE_MS) return 'failed'
+  const age = Date.now() - Date.parse(j.updatedAt)
+  if (j.status === 'queued' && age > QUEUED_STALE_MS) return 'failed'
+  if (j.status === 'running' && age > JOB_STALE_MS) return 'failed'
   return j.status
+}
+
+type MapJobStart = { jobId: string; start?: { campaignId: string; jobId: string; sig: string } }
+
+// When the server can't reach the background function itself (for example when
+// the site is behind Netlify team login), it hands the signed start request to
+// the DM's browser, which is already through that protection.
+async function startFromBrowser(campaignId: string, token: string, start: NonNullable<MapJobStart['start']>) {
+  let ok = false
+  try {
+    const r = await fetch('/.netlify/functions/map-agent-background', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(start),
+    })
+    ok = r.status === 202 || r.ok
+  } catch {
+    ok = false
+  }
+  if (!ok) {
+    await api(`/api/campaigns/${campaignId}/map-agent/${start.jobId}/abandon`, { method: 'POST', token }).catch(() => {})
+    throw new Error('The map agent could not be started. Please try again.')
+  }
 }
 
 function MapAgentSection({ campaign, board, client, token, onError, onInfo }: Pick<Props, 'campaign' | 'board' | 'client' | 'token' | 'onError' | 'onInfo'>) {
@@ -824,7 +850,8 @@ function MapAgentSection({ campaign, board, client, token, onError, onInfo }: Pi
     if (!place.trim()) return onError('Enter a place on Earth first.')
     setSending(true)
     try {
-      await api(`/api/campaigns/${campaign.id}/map-agent`, { method: 'POST', token, json: { place, story, fog } })
+      const res = await api<MapJobStart>(`/api/campaigns/${campaign.id}/map-agent`, { method: 'POST', token, json: { place, story, fog } })
+      if (res.start) await startFromBrowser(campaign.id, token, res.start)
       onInfo('The map agent is on it. This usually takes one to three minutes; you can keep playing.')
       setPlace('')
       setStory('')

@@ -249,6 +249,11 @@ async function serveMap(res: ServerResponse, campaignId: string, sceneId: string
 // recorded on the board and run by the `map-agent-background` function, which
 // can take a few minutes; progress reaches the DM through normal state pushes.
 const MAP_JOB_STALE_MS = 16 * 60 * 1000
+// A job that never left `queued` was never started (the function moves it to
+// `running` straight away), so it stops blocking new runs much sooner.
+const MAP_JOB_QUEUED_STALE_MS = 3 * 60 * 1000
+const mapJobStale = (j: MapJob) =>
+  Date.now() - Date.parse(j.updatedAt) >= (j.status === 'queued' ? MAP_JOB_QUEUED_STALE_MS : MAP_JOB_STALE_MS)
 
 function functionOrigin(req: IncomingMessage): string {
   const host = String(req.headers['x-forwarded-host'] ?? req.headers.host ?? '').split(',')[0].trim()
@@ -269,12 +274,12 @@ async function startMapJob(req: IncomingMessage, res: ServerResponse, campaignId
   const job: MapJob = { id: shortId(10), place, story, fog, status: 'queued', step: 'Waiting for the map agent', error: '', sceneId: null, createdAt: now, updatedAt: now }
   const row = await mutateCampaign(campaignId, (board) => {
     const jobs = board.mapJobs ?? []
-    const busy = jobs.some((j) => (j.status === 'queued' || j.status === 'running') && Date.now() - Date.parse(j.updatedAt) < MAP_JOB_STALE_MS)
+    const busy = jobs.some((j) => (j.status === 'queued' || j.status === 'running') && !mapJobStale(j))
     if (busy) throw new HttpError(409, 'A map is already being built. Wait for it to finish first.')
     if (board.scenes.length >= 12) throw new HttpError(409, 'You have reached the scene limit (12). Delete a scene first.')
     // Keep the 4 most recent jobs; stale unfinished ones are marked failed.
     for (const j of jobs) {
-      if ((j.status === 'queued' || j.status === 'running') && Date.now() - Date.parse(j.updatedAt) >= MAP_JOB_STALE_MS) {
+      if ((j.status === 'queued' || j.status === 'running') && mapJobStale(j)) {
         j.status = 'failed'
         j.error = 'This run stopped responding.'
       }
@@ -285,28 +290,46 @@ async function startMapJob(req: IncomingMessage, res: ServerResponse, campaignId
   const sig = mapJobSignature(row!.mapSecret, campaignId, job.id)
   let started = false
   try {
+    // The function is reached through the site's public URL, so site protection
+    // (team login / password) applies to it too. Pass along the DM's cookies:
+    // their browser just got through that protection, so the function call does too.
+    // The app's own bearer token is not forwarded; the signature authorizes the job.
+    const headers: Record<string, string> = { 'content-type': 'application/json' }
+    const cookie = req.headers.cookie
+    if (cookie) headers.cookie = cookie
     const r = await fetch(`${functionOrigin(req)}/.netlify/functions/map-agent-background`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers,
       body: JSON.stringify({ campaignId, jobId: job.id, sig }),
+      redirect: 'manual',
     })
     started = r.status === 202 || r.ok
-    if (!started) console.warn('[map-agent] background function returned', r.status)
+    if (!started) console.warn('[map-agent] background function returned', r.status, r.status === 401 ? '(blocked by site protection)' : '')
   } catch (e) {
     console.warn('[map-agent] could not start background function', (e as Error).message)
   }
   if (!started) {
-    const failed = await mutateCampaign(campaignId, (board) => {
-      const j = board.mapJobs?.find((x) => x.id === job.id)
-      if (!j || j.status !== 'queued') throw new NoChange()
-      j.status = 'failed'
-      j.error = 'The map agent could not be started. Please try again.'
-      j.updatedAt = new Date().toISOString()
-    }).catch((e) => (e instanceof NoChange ? null : Promise.reject(e)))
-    await afterChange(campaignId, failed)
-    throw new HttpError(502, 'The map agent could not be started. Please try again.')
+    // The DM's browser can always reach the function (it is already through any
+    // site protection), so hand it the signed start request. The signature only
+    // lets this one queued job start once. If the browser can't start it either,
+    // it reports back through abandonMapJob.
+    return json(res, 202, { jobId: job.id, start: { campaignId, jobId: job.id, sig } })
   }
   json(res, 202, { jobId: job.id })
+}
+
+// The DM's browser could not start a queued job: mark it failed so a new one can run.
+async function abandonMapJob(req: IncomingMessage, res: ServerResponse, campaignId: string, jobId: string) {
+  await requireDm(req, campaignId)
+  const row = await mutateCampaign(campaignId, (board) => {
+    const j = board.mapJobs?.find((x) => x.id === jobId)
+    if (!j || j.status !== 'queued') throw new NoChange()
+    j.status = 'failed'
+    j.error = 'The map agent could not be started. Please try again.'
+    j.updatedAt = new Date().toISOString()
+  }).catch((e) => (e instanceof NoChange ? null : Promise.reject(e)))
+  await afterChange(campaignId, row)
+  json(res, 200, { ok: true })
 }
 
 async function getSnapshots(req: IncomingMessage, res: ServerResponse, campaignId: string) {
@@ -352,6 +375,7 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse) {
     if (a === 'campaigns' && b && c === 'me' && method === 'GET') return await whoAmI(req, res, b)
     if (a === 'campaigns' && b && c === 'snapshots' && method === 'GET') return await getSnapshots(req, res, b)
     if (a === 'campaigns' && b && c === 'map-agent' && !d && method === 'POST') return await startMapJob(req, res, b)
+    if (a === 'campaigns' && b && c === 'map-agent' && d && e === 'abandon' && method === 'POST') return await abandonMapJob(req, res, b, d)
     if (a === 'campaigns' && b && c === 'scenes' && d && e === 'map' && method === 'POST') return await uploadMap(req, res, b, d, url)
     if (a === 'campaigns' && b && c === 'scenes' && d && e === 'player-map' && method === 'POST') return await uploadPlayerMap(req, res, b, d, url)
     if (a === 'maps' && b && c && d && e && method === 'GET') return await serveMap(res, b, c, d, e, url)
