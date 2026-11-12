@@ -428,3 +428,8 @@ kbd { font-family: inherit; font-size: 0.8em; padding: 0.05em 0.4em; border-radi
   .token-card { left: 0.5rem; right: 0.5rem; width: auto; }
   .map-corner { bottom: 4.2rem; }
 }
+
+/* Map agent progress spinner */
+.spin { animation: spin 1.1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }

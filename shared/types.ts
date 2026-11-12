@@ -47,6 +47,57 @@ export interface Scene {
   hideRev: number // fogRev of the most recent change that hid cells
   playerMapRev: number // fogRev the stored player (masked) image was rendered for, -1 = none
   tokens: Token[]
+  brief?: SceneBrief | null // DM-only story brief written by the map agent
+}
+
+// ---------- Map agent (real place -> battle map + story brief) ----------
+
+export interface BriefPlace {
+  query: string // what the DM typed
+  name: string
+  address: string
+  lat: number
+  lng: number
+  mapsUrl: string
+}
+
+export interface BriefEncounter {
+  title: string
+  text: string
+  monsters: { key: string; count: number }[] // keys from MONSTER_PRESETS
+}
+
+export interface SceneBrief {
+  source: 'google' | 'ai-only' // ai-only: Google Maps was unavailable, built from the model's own knowledge
+  place: BriefPlace | null // null when Google Maps could not locate it
+  placeQuery: string // the place exactly as the DM typed it
+  dmInput: string // story points the DM provided
+  summary: string // what the real place is
+  premise: string
+  readAloud: string
+  locations: { name: string; text: string }[]
+  npcs: { name: string; role: string; text: string }[]
+  hooks: string[]
+  encounters: BriefEncounter[]
+  secrets: string[]
+  tips: string[]
+  notice: string // e.g. why Google data was not used
+  createdAt: string
+}
+
+export type MapJobStatus = 'queued' | 'running' | 'done' | 'failed'
+
+export interface MapJob {
+  id: string
+  place: string
+  story: string
+  fog: boolean
+  status: MapJobStatus
+  step: string
+  error: string
+  sceneId: string | null
+  createdAt: string
+  updatedAt: string
 }
 
 export interface Character {
@@ -97,6 +148,7 @@ export interface Board {
   initiative: Initiative
   sessionNotes: string // private DM notes
   guide: DmGuide | null // private DM guide (demo)
+  mapJobs?: MapJob[] // DM-only map agent runs
 }
 
 // ---------- Views sent to clients ----------
@@ -123,6 +175,7 @@ export interface SceneView {
   mapUrl: string | null // URL this viewer may load, already signed
   mapPending: boolean // there is an image but no safe version for this viewer yet
   tokens: TokenView[]
+  brief?: SceneBrief | null // DM only
 }
 
 export interface CharacterView extends Omit<Character, 'dmNotes'> {
@@ -155,6 +208,7 @@ export interface SceneSummary {
   hasImage: boolean
   fogEnabled: boolean
   tokenCount: number
+  hasBrief: boolean
 }
 
 export interface CampaignMeta {
@@ -176,6 +230,7 @@ export interface BoardView {
   sessionNotes?: string
   guide?: DmGuide | null
   editingSceneId?: string
+  mapJobs?: MapJob[]
 }
 
 export interface DieRoll {
@@ -261,6 +316,7 @@ export type ClientOp =
   | { type: 'me.update'; name?: string; avatar?: string; color?: string }
   | { type: 'snapshot.save'; label: string }
   | { type: 'snapshot.restore'; snapshotId: number }
+  | { type: 'mapjob.dismiss'; jobId: string }
 
 export type ClientMessage =
   | { type: 'hello'; campaignId: string; token: string; lastMessageId?: number }

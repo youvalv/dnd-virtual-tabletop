@@ -117,8 +117,8 @@ function Table({ campaignId, token }: { campaignId: string; token: string }) {
   }, [campaign?.name])
 
   useEffect(() => {
-    if (isDm && board && !board.guide && dmTab === 'guide') setDmTab('party')
-  }, [isDm, board?.guide])
+    if (isDm && board && !board.guide && !board.scene?.brief && dmTab === 'guide') setDmTab('party')
+  }, [isDm, board?.guide, board?.scene?.brief])
 
   // DM: keep the masked player map in sync with fog changes.
   const scene = board?.scene ?? null
@@ -188,7 +188,7 @@ function Table({ campaignId, token }: { campaignId: string; token: string }) {
 
   const live = campaign.status === 'live'
   const online = participants.filter((p) => p.online)
-  const leftTabs = isDm ? DM_TABS.filter((t) => t.id !== 'guide' || board.guide) : [
+  const leftTabs = isDm ? DM_TABS.filter((t) => t.id !== 'guide' || board.guide || board.scene?.brief) : [
     { id: 'character', label: 'Character', icon: User },
     { id: 'party', label: 'Party', icon: Users },
   ]

@@ -13,8 +13,11 @@
     "test:multiplayer": "node scripts/multiplayer-test.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
+    "@google/genai": "^3.2.0",
     "@netlify/blobs": "^11.1.8",
     "@netlify/database": "^2.0.3",
+    "@netlify/functions": "^6.1.1",
     "@netlify/server": "^0.1.6",
     "drizzle-orm": "^1.0.0-beta.22",
     "lucide-react": "^1.70.0",

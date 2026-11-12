@@ -430,6 +430,17 @@ export async function handleOp(room: Room, c: Client, op: ClientOp): Promise<voi
       return
     }
 
+    case 'mapjob.dismiss': {
+      requireDm(c)
+      await mutate(room, (board) => {
+        const jobs = board.mapJobs ?? []
+        const job = jobs.find((j) => j.id === String(op.jobId))
+        if (!job) throw new NoChange()
+        board.mapJobs = jobs.filter((j) => j !== job)
+      })
+      return
+    }
+
     // ---------------- initiative ----------------
     case 'initiative.add': {
       requireDm(c)

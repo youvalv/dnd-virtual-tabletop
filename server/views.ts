@@ -113,6 +113,7 @@ function sceneView(board: Board, scene: Scene, viewer: Viewer, campaignId: strin
     mapUrl: url,
     mapPending: pending,
     tokens,
+    ...(isDm ? { brief: scene.brief ?? null } : {}),
   }
 }
 
@@ -153,12 +154,13 @@ export function boardView(board: Board, viewer: Viewer, campaignId: string, secr
   }
   if (isDm) {
     view.scenes = board.scenes.map((s) => ({
-      id: s.id, name: s.name, cols: s.cols, rows: s.rows, hasImage: s.bg.kind === 'image', fogEnabled: s.fogEnabled, tokenCount: s.tokens.length,
+      id: s.id, name: s.name, cols: s.cols, rows: s.rows, hasImage: s.bg.kind === 'image', fogEnabled: s.fogEnabled, tokenCount: s.tokens.length, hasBrief: !!s.brief,
     }))
     view.activeSceneId = board.activeSceneId
     view.sessionNotes = board.sessionNotes
     view.guide = board.guide
     view.editingSceneId = sceneId
+    view.mapJobs = board.mapJobs ?? []
   }
   return view
 }

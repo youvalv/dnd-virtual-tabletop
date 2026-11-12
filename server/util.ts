@@ -57,3 +57,8 @@ export class HttpError extends Error {
     this.status = status
   }
 }
+
+// Signs the request that starts a map agent run (server -> background function).
+export function mapJobSignature(mapSecret: string, campaignId: string, jobId: string): string {
+  return sign(mapSecret, `mapjob.${campaignId}.${jobId}`)
+}

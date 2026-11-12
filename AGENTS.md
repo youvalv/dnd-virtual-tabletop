@@ -12,6 +12,10 @@ Browser (React SPA, dist/)  ──HTTP /api/*──▶  Netlify Server (netlify/
                                                    │  server/views.ts  per-viewer filtering (security boundary)
                                                    ├──▶ Netlify Database (Postgres, Drizzle): db/schema.ts
                                                    └──▶ Netlify Blobs store "maps": map images
+
+Netlify Server ──POST (HMAC-signed)──▶ netlify/functions/map-agent-background.mts ──▶ server/mapAgent.ts
+                                         Claude tool loop (AI Gateway) + Google Maps Platform + Gemini image model
+                                         writes board.mapJobs / new scene + brief to the DB; instances sync via NOTIFY/polling
 ```
 
 - **The server is authoritative.** Clients send intents (`ClientOp` in `shared/types.ts`) over the WebSocket. The server validates input and permissions in `server/ops.ts`, persists the change, and pushes each connected client its own filtered view.
@@ -23,6 +27,13 @@ Browser (React SPA, dist/)  ──HTTP /api/*──▶  Netlify Server (netlify/
 - **Multiple server instances**: Netlify may run several instances, each with its own sockets. After a change, the instance sends `pg_notify('vtt_sync', ...)`. Instances `LISTEN` and also poll `campaigns.version` and the latest message id every 2.5 s as a fallback, so a missed notification only delays an update. Pings and drag previews travel only via NOTIFY (they are best-effort).
 - **Identity**: there are no accounts. Creating or joining returns a random secret. The server stores only its SHA-256 hash in `participants.token_hash`, and the client keeps the secret in localStorage (`src/lib/api.ts`). The DM can move to another device with `/table/:id#dmkey=...`.
 
+## Map agent (real place to battle map)
+
+- The DM posts `{ place, story, fog }` to `/api/campaigns/:id/map-agent`. The server records a `MapJob` in `board.mapJobs` (one active job per campaign; stale after 16 minutes) and starts the background function with `mapJobSignature` (HMAC with the campaign's `mapSecret`). The function moves the job from `queued` to `running` exactly once, so replayed requests do nothing.
+- The agent (`claude-opus-5-5`, adaptive thinking) uses the tools `find_place`, `nearby_places`, `view_map`, `paint_battle_map` and `submit_brief`. Encounter monsters are restricted to `MONSTER_PRESETS` keys through a strict tool schema, which keeps the content within the SRD.
+- Google failures are reported to the agent as tool errors. The agent then paints without a reference (`source: 'ai-only'`), and the brief's `notice` tells the DM why.
+- The output is a new scene with the painted map stored at `maps/<campaign>/<scene>/full/1` and `scene.brief`. It also adds a DM-only chat message.
+
 ## Hidden information (security boundary)
 
 `server/views.ts` is the only path from board state to a client. Players never receive:
@@ -30,7 +41,7 @@ Browser (React SPA, dist/)  ──HTTP /api/*──▶  Netlify Server (netlify/
 - tokens with `hidden: true`
 - non-PC tokens whose squares are all fogged
 - monster exact HP or AC (they get a coarse `health` 0-4 instead)
-- `dmNotes`, `sessionNotes` or `guide`
+- `dmNotes`, `sessionNotes`, `guide`, scene `brief` or `mapJobs`
 - other scenes
 - the invite code
 - DM-only rolls (`messages.dm_only`)
@@ -49,6 +60,7 @@ When adding a field to `Board`, `Token`, `Character` or `Scene`, decide whether 
 
 ## Key directories
 
+- `netlify/functions/map-agent-background.mts`: background function that runs the map agent. It is the only Netlify Function in the project.
 - `netlify/server/index.ts`: server entry. It handles WebSocket connection lifecycle and presence. Its config exports `path: ['/api/*', '/ws']`. It must remain the only file in `netlify/server/`.
 - `server/`: backend modules (http, ops, hub, views, store, content/demo, util, demo-map).
 - `shared/`: types, the dice parser and roller, and presets (conditions, avatars, SRD monster presets). The client and server both use them.

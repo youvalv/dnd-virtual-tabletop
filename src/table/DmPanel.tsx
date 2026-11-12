@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import {
   BookMarked, Check, ChevronDown, ChevronUp, Copy, Eye, EyeOff, ImageUp, KeyRound, Play, Plus, RefreshCw, RotateCcw, Save,
-  ScrollText, SkipBack, SkipForward, Square, Swords, Trash2, Users, Map as MapIcon, Dices,
+  ScrollText, SkipBack, SkipForward, Square, Swords, Trash2, Users, Map as MapIcon, Dices, Globe, LoaderCircle, X, ExternalLink,
 } from 'lucide-react'
-import type { BoardView, CampaignMeta, CharacterView, ParticipantView, YouInfo } from '../../shared/types.ts'
+import type { BoardView, CampaignMeta, CharacterView, MapJob, ParticipantView, SceneBrief, SceneView, YouInfo } from '../../shared/types.ts'
 import { MONSTER_PRESETS, TOKEN_COLORS } from '../../shared/presets.ts'
 import type { GameClient } from '../lib/game.ts'
 import { api, inviteUrl } from '../lib/api.ts'
@@ -52,7 +52,170 @@ function useRun(client: GameClient, onError: (m: string) => void) {
 
 // ---------------------------------------------------------------------------
 
-function GuideTab({ board, campaign, client, onError }: Props) {
+function GuideTab(props: Props) {
+  const brief = props.board.scene?.brief
+  if (!brief || !props.board.scene) return <CampaignGuide {...props} />
+  return (
+    <div className="stack">
+      <SceneBriefView {...props} scene={props.board.scene} brief={brief} />
+      {props.board.guide && (
+        <>
+          <div className="divider" />
+          <CampaignGuide {...props} />
+        </>
+      )}
+    </div>
+  )
+}
+
+/** Free squares nearest the center of the scene, for placing new tokens. */
+function findSpots(scene: SceneView, count: number): [number, number][] {
+  const taken = new Set(scene.tokens.map((t) => `${t.x},${t.y}`))
+  const cx = Math.floor(scene.cols / 2)
+  const cy = Math.floor(scene.rows / 2)
+  const spots: [number, number][] = []
+  for (let r = 0; r < Math.max(scene.cols, scene.rows) && spots.length < count; r++)
+    for (let dy = -r; dy <= r && spots.length < count; dy++)
+      for (let dx = -r; dx <= r && spots.length < count; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue
+        const x = cx + dx
+        const y = cy + dy
+        if (x < 0 || y < 0 || x >= scene.cols || y >= scene.rows || taken.has(`${x},${y}`)) continue
+        taken.add(`${x},${y}`)
+        spots.push([x, y])
+      }
+  return spots
+}
+
+function SceneBriefView({ board, scene, brief, client, onError, onInfo }: Props & { scene: SceneView; brief: SceneBrief }) {
+  const run = useRun(client, onError)
+  const isLive = scene.id === board.activeSceneId
+  const placeEncounter = async (enc: SceneBrief['encounters'][number]) => {
+    const list = enc.monsters.flatMap((m) => {
+      const p = MONSTER_PRESETS.find((x) => x.key === m.key)
+      return p ? Array.from({ length: m.count }, (_, i) => ({ p, n: m.count > 1 ? `${p.name} ${i + 1}` : p.name })) : []
+    })
+    if (list.length === 0) return
+    const spots = findSpots(scene, list.length)
+    const ok = await run({
+      type: 'token.add',
+      tokens: spots.map(([x, y], i) => {
+        const { p, n } = list[i]
+        return {
+          name: n, kind: p.key === 'commoner' ? 'npc' : 'monster', x, y, hp: p.hp, maxHp: p.hp, ac: p.ac, icon: p.icon, color: p.color, size: p.size,
+          hidden: true, dmNotes: `${enc.title}. ${p.name} (SRD 5.2.1): AC ${p.ac}, HP ${p.hp}. ${p.note}`,
+        }
+      }),
+    })
+    if (ok) onInfo('Creatures placed near the center, hidden from players. Drag them into position, then reveal them from their token card.')
+  }
+  return (
+    <div className="stack">
+      <div>
+        <p className="kicker">Story brief · only you can see this</p>
+        <h3 className="section-title" style={{ fontSize: '1.45rem' }}>{scene.name}</h3>
+        {brief.place && (
+          <p className="tiny muted" style={{ margin: '0.15rem 0 0' }}>
+            Based on <strong>{brief.place.name}</strong>{brief.place.address && brief.place.address !== brief.place.name ? `, ${brief.place.address}` : ''} ·{' '}
+            <a href={brief.place.mapsUrl} target="_blank" rel="noreferrer">Open in Google Maps <ExternalLink size={11} /></a>
+          </p>
+        )}
+        {!brief.place && (
+          <p className="tiny muted" style={{ margin: '0.15rem 0 0' }}>
+            Based on <strong>{brief.placeQuery}</strong> ·{' '}
+            <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(brief.placeQuery)}`} target="_blank" rel="noreferrer">Search in Google Maps <ExternalLink size={11} /></a>
+          </p>
+        )}
+        {brief.summary && <p className="small" style={{ color: '#dccfbb' }}>{brief.summary}</p>}
+      </div>
+      {brief.notice && <div className="callout" style={{ margin: 0 }}><p className="small">{brief.notice}</p></div>}
+      {!isLive && (
+        <div className="row">
+          <button className="btn xs gold" onClick={() => run({ type: 'scene.activate', sceneId: scene.id })}>Go live</button>
+          <span className="tiny faint">Players can't see this scene yet.{scene.fogEnabled ? ' It starts covered by fog.' : ''}</span>
+        </div>
+      )}
+      {brief.premise && (
+        <div className="stack tight">
+          <div className="sub-title" style={{ margin: 0 }}>Premise</div>
+          <p className="small" style={{ color: '#dccfbb', margin: 0, whiteSpace: 'pre-line' }}>{brief.premise}</p>
+        </div>
+      )}
+      {brief.readAloud && (
+        <div className="stack tight">
+          <div className="sub-title" style={{ margin: 0 }}>Read aloud</div>
+          <div className="read-aloud small">{brief.readAloud}</div>
+        </div>
+      )}
+      {brief.locations.length > 0 && (
+        <div className="stack tight">
+          <div className="sub-title" style={{ margin: 0 }}>Locations on the map</div>
+          {brief.locations.map((l, i) => (
+            <details key={i} className="guide-block" open={i === 0}>
+              <summary style={{ cursor: 'pointer' }}><strong>{l.name}</strong></summary>
+              <p className="small" style={{ color: '#dccfbb', marginTop: '0.35rem' }}>{l.text}</p>
+            </details>
+          ))}
+        </div>
+      )}
+      {brief.npcs.length > 0 && (
+        <div className="stack tight">
+          <div className="sub-title" style={{ margin: 0 }}>People</div>
+          {brief.npcs.map((n, i) => (
+            <details key={i} className="guide-block">
+              <summary style={{ cursor: 'pointer' }}><strong>{n.name}</strong>{n.role && <span className="tiny muted"> · {n.role}</span>}</summary>
+              <p className="small" style={{ color: '#dccfbb', marginTop: '0.35rem' }}>{n.text}</p>
+            </details>
+          ))}
+        </div>
+      )}
+      {brief.encounters.length > 0 && (
+        <div className="stack tight">
+          <div className="sub-title" style={{ margin: 0 }}>Encounters</div>
+          {brief.encounters.map((e, i) => (
+            <details key={i} className="guide-block">
+              <summary style={{ cursor: 'pointer' }}><strong>{e.title}</strong></summary>
+              <p className="small" style={{ color: '#dccfbb', marginTop: '0.35rem' }}>{e.text}</p>
+              {e.monsters.length > 0 && (
+                <div className="row wrap" style={{ gap: '0.35rem' }}>
+                  {e.monsters.map((m, j) => {
+                    const p = MONSTER_PRESETS.find((x) => x.key === m.key)
+                    return p ? <span key={j} className="chip">{m.count} × {p.name}</span> : null
+                  })}
+                  <button className="btn xs" onClick={() => placeEncounter(e)}><Plus size={12} /> Place on map</button>
+                </div>
+              )}
+            </details>
+          ))}
+        </div>
+      )}
+      <BriefList title="Hooks" items={brief.hooks} />
+      <BriefList title="Secrets and clues" items={brief.secrets} />
+      <BriefList title="Tips" items={brief.tips} />
+      {brief.dmInput && (
+        <details className="guide-block">
+          <summary style={{ cursor: 'pointer' }} className="small"><strong>Your story points</strong></summary>
+          <p className="small muted" style={{ marginTop: '0.35rem', whiteSpace: 'pre-line' }}>{brief.dmInput}</p>
+        </details>
+      )}
+      {brief.source === 'google' && <p className="tiny faint" style={{ margin: 0 }}>Place data and reference imagery: Google Maps. The battle map is an AI-painted fantasy reinterpretation.</p>}
+    </div>
+  )
+}
+
+function BriefList({ title, items }: { title: string; items: string[] }) {
+  if (items.length === 0) return null
+  return (
+    <div className="stack tight">
+      <div className="sub-title" style={{ margin: 0 }}>{title}</div>
+      <ul className="small" style={{ paddingLeft: '1.1em', margin: 0, color: '#dccfbb' }}>
+        {items.map((t, i) => <li key={i} style={{ marginBottom: '0.3em' }}>{t}</li>)}
+      </ul>
+    </div>
+  )
+}
+
+function CampaignGuide({ board, campaign, client, onError }: Props) {
   const g = board.guide
   const run = useRun(client, onError)
   if (!g) {
@@ -255,20 +418,7 @@ function EncounterTab({ board, client, onError }: Props) {
 
   const addMonsters = async () => {
     if (!scene) return
-    const taken = new Set(tokens.map((t) => `${t.x},${t.y}`))
-    const cx = Math.floor(scene.cols / 2)
-    const cy = Math.floor(scene.rows / 2)
-    const spots: [number, number][] = []
-    for (let r = 0; r < Math.max(scene.cols, scene.rows) && spots.length < count; r++)
-      for (let dy = -r; dy <= r && spots.length < count; dy++)
-        for (let dx = -r; dx <= r && spots.length < count; dx++) {
-          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue
-          const x = cx + dx
-          const y = cy + dy
-          if (x < 0 || y < 0 || x >= scene.cols || y >= scene.rows || taken.has(`${x},${y}`)) continue
-          taken.add(`${x},${y}`)
-          spots.push([x, y])
-        }
+    const spots = findSpots(scene, count)
     const base = customName.trim() || (isCustom ? 'Monster' : p!.name)
     await run({
       type: 'token.add',
@@ -468,6 +618,8 @@ function ScenesTab({ board, campaign, client, token, onError, onInfo }: Props) {
         </>
       )}
 
+      <MapAgentSection campaign={campaign} board={board} client={client} token={token} onError={onError} onInfo={onInfo} />
+
       <h3 className="section-title" style={{ marginTop: '0.5rem' }}>New scene</h3>
       <form className="dm-row" onSubmit={async (e) => { e.preventDefault(); if (await run({ type: 'scene.add', name: newName || 'New scene', cols, rows })) { setNewName(''); onInfo('Scene created. It stays hidden until you press Go live.') } }}>
         <input className="input sm" placeholder="Scene name, e.g. Goblin caves" value={newName} onChange={(e) => setNewName(e.target.value)} maxLength={60} />
@@ -644,5 +796,91 @@ function SessionTab({ board, campaign, client, token, onError, onInfo }: Props) 
         </>
       )}
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Map agent: real place (+ story points) -> battle map + story brief
+
+const JOB_STALE_MS = 16 * 60 * 1000
+
+function jobState(j: MapJob): MapJob['status'] {
+  if ((j.status === 'queued' || j.status === 'running') && Date.now() - Date.parse(j.updatedAt) > JOB_STALE_MS) return 'failed'
+  return j.status
+}
+
+function MapAgentSection({ campaign, board, client, token, onError, onInfo }: Pick<Props, 'campaign' | 'board' | 'client' | 'token' | 'onError' | 'onInfo'>) {
+  const run = useRun(client, onError)
+  const [place, setPlace] = useState('')
+  const [story, setStory] = useState('')
+  const [fog, setFog] = useState(true)
+  const [sending, setSending] = useState(false)
+  const jobs = board.mapJobs ?? []
+  const busy = jobs.some((j) => jobState(j) === 'queued' || jobState(j) === 'running')
+  const sceneFull = (board.scenes ?? []).length >= 12
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!place.trim()) return onError('Enter a place on Earth first.')
+    setSending(true)
+    try {
+      await api(`/api/campaigns/${campaign.id}/map-agent`, { method: 'POST', token, json: { place, story, fog } })
+      onInfo('The map agent is on it. This usually takes one to three minutes; you can keep playing.')
+      setPlace('')
+      setStory('')
+    } catch (err) {
+      onError((err as Error).message)
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <>
+      <h3 className="section-title" style={{ marginTop: '0.5rem' }}><Globe size={16} /> Map from a real place</h3>
+      <form className="dm-row" onSubmit={submit}>
+        <span className="tiny muted">Name any place on Earth. An AI agent looks it up on Google Maps, paints a fantasy battle map from the satellite view and writes you a private story brief.</span>
+        <label className="field">
+          <span>Place on Earth</span>
+          <input className="input sm" value={place} onChange={(e) => setPlace(e.target.value)} maxLength={200} placeholder="e.g. Bodiam Castle, England · Ponte Vecchio, Florence" />
+        </label>
+        <label className="field">
+          <span>Story points <span className="faint">(optional)</span></span>
+          <textarea className="textarea" rows={4} value={story} onChange={(e) => setStory(e.target.value)} maxLength={3000}
+            placeholder={'Anything the story should include, e.g.\n- a smuggler ring hides in the cellars\n- the party is level 2 and owes the mayor a favor\n- spooky, foggy autumn night'} />
+        </label>
+        <label className="row small" style={{ gap: '0.45rem' }}>
+          <input type="checkbox" checked={fog} onChange={(e) => setFog(e.target.checked)} />
+          Start the new scene covered by fog
+        </label>
+        <button className="btn sm gold" disabled={sending || busy || sceneFull} style={{ justifySelf: 'start' }}>
+          {busy || sending ? <LoaderCircle size={14} className="spin" /> : <Globe size={14} />} {busy ? 'Building a map...' : 'Build map and story'}
+        </button>
+        {sceneFull && <span className="tiny faint">You have 12 scenes, the maximum. Delete one to build another.</span>}
+      </form>
+      {jobs.length > 0 && (
+        <div className="stack tight">
+          {jobs.map((j) => {
+            const st = jobState(j)
+            return (
+              <div key={j.id} className="init-row" style={{ alignItems: 'flex-start' }}>
+                <span className="grow small">
+                  <strong>{j.place}</strong>
+                  <span className="tiny faint"> · {st === 'done' ? 'ready' : st === 'failed' ? 'failed' : j.step}</span>
+                  {st === 'failed' && <span className="tiny" style={{ display: 'block', color: 'var(--blood)' }}>{j.error || 'This run stopped responding. Try again.'}</span>}
+                </span>
+                {(st === 'queued' || st === 'running') && <LoaderCircle size={14} className="spin" aria-label="Working" />}
+                {st === 'done' && j.sceneId && (board.scenes ?? []).some((s) => s.id === j.sceneId) && board.scene?.id !== j.sceneId && (
+                  <button className="btn xs" onClick={() => run({ type: 'scene.edit', sceneId: j.sceneId! })}>Open</button>
+                )}
+                {(st === 'done' || st === 'failed') && (
+                  <button className="btn xs ghost" title="Dismiss" aria-label="Dismiss" onClick={() => run({ type: 'mapjob.dismiss', jobId: j.id })}><X size={12} /></button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </>
   )
 }
